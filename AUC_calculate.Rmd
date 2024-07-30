@@ -1,0 +1,172 @@
+---
+title: "Calculate_AUC"
+author: "Xuhong"
+date: "`r Sys.Date()`"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+We set the initial values and randomly generated x and y,We also calculated the numbers of y=1 and y=0,
+The number of cases is 724, indicating y=1.
+The number of controls is 2276, indicating y=0.
+```{r 1}
+beta0 <- -4
+beta1 <- 0.6
+# generate x  y_true
+set.seed(0)
+x <- rnorm(3000, mean = 10, sd = 4)
+p <- exp(beta0 + beta1 * x) / (1 + exp(beta0 + beta1 * x))
+
+# get the true label from two-points Bernoulli
+set.seed(1)
+y_true <- rbinom(length(x), 1, p)
+head(y_true, 100)
+
+count_y_equals_1 <- sum(y_true == 1)
+count_y_equals_0 <- sum(y_true == 0)
+```
+
+Subsequently, the labels y and x, as determined earlier, were employed to perform logistic regression, yielding the parameter estimates:
+Beta0_hat=-3.95,
+Beta1_hat=0.602.
+These estimated values were then utilized to calculate the predicted values.
+```{r 2}
+# Fitting logistic model
+data <- data.frame(x, y_true)
+log_model <- glm(y_true ~ x, data = data, family = binomial(link="logit"))
+summary(log_model)
+
+#get the estimate value of intercept and slope
+coefficients <- coef(log_model)
+beta0_hat <- coefficients["(Intercept)"]
+beta1_hat <- coefficients["x"]
+
+#get the predicate value logistic model 
+y_pred<-exp(beta0_hat + beta1_hat * x) / (1 + exp(beta0_hat + beta1_hat * x))
+```
+  
+Moving forward, we proceed to compute the TPR and FPR. Subsequently, we construct the ROC curve. It is noteworthy that we systematically vary the threshold from 0 to 1 in increments of 0.01 during this process.
+```{r 3}
+#ROC plot method 1 and print the value of AUC
+library(pROC)
+moni<-roc(y_true~y_pred,smooth=FALSE)
+plot(moni, print.auc=TRUE, auc.polygon=TRUE, 
+     grid=c(0.1,0.1),
+     grid.col=c("#BAC94A",'#329D9C'),
+     max.auc.polygon=TRUE,
+     auc.polygon.col="#CEE4D2")
+
+#ROC curve plot method 2
+cutoff <- seq(0, 1, length = 100)
+FPR <- sapply(cutoff,
+              function(thresh) {
+                sum(y_pred >= thresh & y_true != 1) / sum(y_true != 1)
+              })
+TPR <- sapply(cutoff,
+              function(thresh) {
+                sum(y_pred >= thresh & y_true == 1) / sum(y_true == 1)
+              })
+```
+
+```{r 4, include=FALSE}
+# plot ROC curve
+plot(FPR, TPR, type = "l",lwd = 2, xlab = "False Positive Rate", ylab = "True Positive Rate", main = "ROC Curve")
+lines(FPR, TPR, col = "#C5D9B3", lwd = 2)
+
+grid()
+abline(h = seq(0, 1, by = 0.1), v = seq(0, 1, by = 0.2), col = "#D6C1A9", lty = 2)
+```
+
+In this part, we present three methods for calculating the AUC, building upon the aforementioned procedures.
+
+```{r 5}
+#method 1
+library(pROC)
+auc_value<-auc(y_true,y_pred)
+```
+The value of AUC based on method 1 is 0.897
+
+```{r 6}
+#method 2
+s <- 0
+for (i in which(y_true == 1)) {
+  for (j in which(y_true == 0)) {
+    if (y_pred[i] > y_pred[j]) {
+      s <- s + 1
+    } 
+  }
+}
+s <- s / (sum(y_true == 1) * sum(y_true == 0))
+s
+#consider the case of equality
+s1 <- 0
+equal_count <- 0
+for (i in which(y_true == 1)) {
+  for (j in which(y_true == 0)) {
+    if (y_pred[i] > y_pred[j]) {
+      s1 <- s1 + 1
+    } else if (y_pred[i] == y_pred[j]){
+      s1<-s1+0.5
+      equal_count <- equal_count + 1 
+    }
+  }
+}
+s1 <- s1 / (sum(y_true == 1) * sum(y_true == 0))
+s1
+```
+The value of AUC based on method 2 is 0.89653931
+
+
+```{r 7}
+#method 3
+#number lattice
+library(ggplot2)
+# sorted y_pred，get the indices
+sorted_indices <- order(y_pred, decreasing = TRUE)
+sorted_y_pred <- y_pred[sorted_indices]
+sorted_y_true <- y_true[sorted_indices]
+
+# innitialize x and y as 0
+x <- 0
+y <- 0
+
+# creat a data frame
+df <- data.frame(x = numeric(length(sorted_y_pred)), y = numeric(length(sorted_y_pred)))
+
+# traverse the sorted y_pred
+for (i in 1:length(sorted_y_pred)) {
+ 
+  if (sorted_y_true[i] == 1) {
+    y <- y + 1
+  } else {
+    x <- x + 1
+  }
+  
+  # update data frame
+  df[i, ] <- c(x, y)
+}
+
+# use ggplot2 
+ggplot(df, aes(x, y)) +
+  geom_point(color='#A5CAD2',size=0.1) +
+  labs(x = "FPR", y = "TPR", title = "ROC curve")+
+  theme_minimal()+ theme(panel.grid.major = element_line(color = "#ECD59F", linetype = "dashed"))
+
+
+# get the coordinate of x and y
+x_values <- df$x
+y_values <- df$y
+
+# calculate the area under curve
+area_under_curve <- integrate(Vectorize(function(x) approx(x_values, y_values, xout = x)$y), min(x_values), max(x_values))$value
+
+# calculate the total 
+total_area <- max(x_values) * max(y_values)
+
+# calculate the auc
+auc_area <- (area_under_curve / total_area)
+```
+
